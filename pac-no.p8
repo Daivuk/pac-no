@@ -14,112 +14,67 @@ east = 1
 south = 2
 west = 3
 
-function new_obj(sprite, x, y)
- local obj = {
-  x = x * 4 + 2,
-  y = y * 4 + 2,
-  sprite = sprite
- }
- add_mapobj(x, y, obj)
- return obj
-end
+function _init()
+ dt = 1 / 60
+ 
+ -- build the map
+ grid = {}
+ for y = 0, 31 do
+  grid[y] = {}
+  for x = 0, 31 do
+   local tile = {
+   }
+   grid[y][x] = tile
+   
+   local id = sget(x, y + 64)
+   
+   -- wall
+   if id == 13 then
+    tile.wall = true
+    
+   -- pac-dot
+   elseif id == 9 then
+    add(pac_dots, {
+     x = x * 4 + 2,
+     y = y * 4 + 2
+    })
+    
+   -- power pellets
+   elseif id == 12 then
+    add(power_pellets, {
+     x = x * 4 + 2,
+     y = y * 4 + 2
+    })
+    
+   -- pac-man
+   elseif id == 10 then
+    pacman = new_pacman(x * 4 + 4, y * 4 + 2)
 
-function add_pacman(x, y)
- pacman = {
-  x = x * 4 + 4,
-  y = y * 4 + 2,
-  direction = north,
-  anim = 0
- }
-end
-
-function create_maptile(x, y)
- grid[y * 32 + x] = {
- }
-end
-
-function tile_at(x, y)
- return grid[y * 32 + x]
-end
-
-function add_wall(x, y)
- grid[y * 32 + x].wall = true
-end
-
-function add_mapobj(x, y, obj)
- grid[y * 32 + x].obj = obj
-end
-
-function foreach_sprmap(
-          sprite,
-          callback,
-          pred)
- local bx = (sprite % 16) * 8
- local by = flr(sprite / 16) * 8
- for y = by, by + 31 do
-  for x = bx, bx + 31 do
-   local c = sget(x, y)
-   if pred(c) then
-    callback(x - bx, y - by)
    end
   end
  end
-end
-
-function add_obj(arr, ...)
- add(arr, new_obj(...))
-end
-
-function mk_add_obj_callback(arr, sprite)
- return
-  function(...)
-   return add_obj(arr, sprite, ...)
+ 
+ -- pass on the extras
+ for y = 0, 31 do
+  for x = 0, 31 do
+   local tile = grid[y][x]
+   local id = sget(x + 32, y + 64)
+    
+   -- path node
+   if id == 11 then
+   	local node = new_node(x, y)
+    add(nodes, node)
+    tile.node = node
+    
+   -- mid path node
+   elseif id == 9 then
+   	local node = new_node(x + .5, y)
+    add(nodes, node)
+    tile.node = node
+   
+   end
   end
-end
-
-function filter_pred(id)
- return
-  function (v)
-   return v == id
-  end
-end
-
-function pred_always()
- return true
-end
-
-function _init()
- dt = 1 / 60
-
- -- build the map and place
- -- objects
- foreach_sprmap(128,
-  create_maptile,
-  pred_always)
-
- foreach_sprmap(128,
-  add_wall,
-  filter_pred(13))
-
- foreach_sprmap(128,
-  mk_add_obj_callback(pac_dots, 0),
-  filter_pred(9))
-
- foreach_sprmap(128,
-  mk_add_obj_callback(power_pellets, 16),
-  filter_pred(12))
-
- foreach_sprmap(128,
-  add_pacman,
-  filter_pred(10))
-
- -- create map nodes
- foreach_sprmap(132,
-  add_node,
-  filter_pred(11))
- foreach_sprmap(132,
-  add_midnode,
-  filter_pred(9))
+ end
 
  -- connect map nodes together
  connect_nodes(nodes)
@@ -128,8 +83,8 @@ function _init()
  -- teleport nodes
  local teleport_node1,
        teleport_node2 =
-  tile_at(1, 14).node,
-  tile_at(30, 14).node
+  grid[14][1].node,
+  grid[14][30].node
  teleport_node1.teleport = teleport_node2
  teleport_node2.teleport = teleport_node1
 end
@@ -141,40 +96,21 @@ end
 function _draw()
  cls(0)
  map()
- foreach(pac_dots, draw_obj)
- foreach(power_pellets, draw_obj)
+ foreach(pac_dots, draw_pacdot)
+ foreach(power_pellets, draw_powerpellet)
  draw_pacman(pacman)
  --draw_nodes(nodes)
-end
-
-function draw_obj(obj)
- spr(obj.sprite, obj.x - 4, obj.y - 4)
-end
-
-function sprite_dir(base_spr, line_count, obj)
- return
-  (obj.anim * 8 % line_count) +
-  base_spr +
-  obj.direction * line_count
 end
 
 -->8
 -- path finding
 
-function add_node(x, y)
+function new_node(x, y)
  local node = {
   x = x,
   y = y,
   nbh = {}
  }
- add(nodes, node)
- grid[y * 32 + x].node = node
- return node
-end
-
-function add_midnode(x, y)
- local node = add_node(x, y)
- node.x += .5
  return node
 end
 
@@ -187,7 +123,7 @@ function can_connect(node1, node2)
   local x, y = node1.x, node1.y
   while x != node2.x or
         y != node2.y do
-   if tile_at(x, y).wall then
+   if grid[y][x].wall then
     return false
    end
    if (node2.x > node1.x) x += 1
@@ -227,12 +163,32 @@ function draw_nodes(nodes)
 end
 
 -->8
---pacman
+-- pacman
+
+function new_pacman(x, y)
+ local pacman = {
+  x = x,
+  y = y
+ }
+ return pacman
+end
+
 function draw_pacman(pacman)
- local sprite =
-  sprite_dir(32, 4, pacman)
- spr(sprite,
-  pacman.x - 4, pacman.y - 4)
+ spr(32, pacman.x - 4, pacman.y - 4)
+end
+
+-->8
+-- pacdot
+
+function draw_pacdot(pacdot)
+ spr(0, pacdot.x - 4, pacdot.y - 4)
+end
+
+-->8
+-- power pellet
+
+function draw_powerpellet(powerpellet)
+ spr(16, powerpellet.x - 4, powerpellet.y - 4)
 end
 
 __gfx__
