@@ -3,28 +3,45 @@ version 16
 __lua__
 -- game
 
-grid = {}
-nodes = {}
-pac_dots = {}
-power_pellets = {}
-pacman = {}
+facing = 0
+north = 1
+east = 2
+south = 3
+west = 4
 
-north = 0
-east = 1
-south = 2
-west = 3
+inv = {
+ [north] = south,
+ [east] = west,
+ [south] = north,
+ [west] = east
+}
 
 function _init()
  dt = 1 / 60
+ grid = {}
+ nodes = {}
+ pac_dots = {}
+ power_pellets = {}
+ pacman = {}
+ ghosts = {}
+ pickup_time = 0
+ big_pickup_time = 0
+ freeze = 0
  
  -- build the map
  grid = {}
- for y = 0, 31 do
+ for y = -1, 32 do
   grid[y] = {}
-  for x = 0, 31 do
+  for x = -1, 32 do
    local tile = {
    }
    grid[y][x] = tile
+   
+   if x == -1 or y == -1 or
+      x == 32 or y == 32 then
+    tile.wall = true
+    goto continue
+   end
    
    local id = sget(x, y + 64)
    
@@ -49,8 +66,24 @@ function _init()
    -- pac-man
    elseif id == 10 then
     pacman = new_pacman(x * 4 + 4, y * 4 + 2)
-
+    
+   -- ghosts
+   elseif id == 8 then
+    local ghost = new_ghost(x * 4 + 4, y * 4 + 2, blinky)
+    add(ghosts, ghost)
+   elseif id == 14 then
+    local ghost = new_ghost(x * 4 + 4, y * 4 + 2, pinky)
+    add(ghosts, ghost)
+   elseif id == 11 then
+    local ghost = new_ghost(x * 4 + 4, y * 4 + 2, inky)
+    add(ghosts, ghost)
+   elseif id == 15 then
+    local ghost = new_ghost(x * 4 + 4, y * 4 + 2, clyde)
+    add(ghosts, ghost)
+    
    end
+   
+::continue::
   end
  end
  
@@ -66,44 +99,113 @@ function _init()
     add(nodes, node)
     tile.node = node
     
+   -- node preventing going up
+   elseif id == 10 then
+   	local node = new_node(x, y)
+   	node.prevent_north = true
+    add(nodes, node)
+    tile.node = node
+    
    -- mid path node
    elseif id == 9 then
    	local node = new_node(x + .5, y)
     add(nodes, node)
     tile.node = node
-   
    end
   end
  end
-
- -- connect map nodes together
- connect_nodes(nodes)
 
  -- manually connect the 2
  -- teleport nodes
  local teleport_node1,
        teleport_node2 =
-  grid[14][1].node,
-  grid[14][30].node
+  grid[14][0].node,
+  grid[14][31].node
  teleport_node1.teleport = teleport_node2
  teleport_node2.teleport = teleport_node1
+ 
+ set_state(pacman, pacman_idle)
+ for ghost in all(ghosts) do
+  set_state(ghost, 
+   ghost_starting_state[ghost.typ])
+ end
+end
+
+function map_pos(x, y)
+ return flr(x / 4), flr(y / 4)
+end
+
+function wall_at(x, y)
+ local mx, my = map_pos(x, y)
+ return grid[my][mx].wall
+end
+
+function node_at_exact(x, y)
+ for node in all(nodes) do
+  local nx, ny = 
+   node.x * 4 + 2,
+   node.y * 4 + 2
+  if flr(x + .5) == nx and
+     flr(y + .5) == ny then
+   return node
+  end
+ end
+ return nil
+end
+
+function dis(x1, y1, x2, y2)
+ local q, w =
+  x2 - x1, y2 - y1
+ return sqrt(q*q + w*w)
+end
+
+function dir_to_vec(direction)
+ if direction == north then
+  return 0, -1
+ elseif direction == east then
+  return 1, 0
+ elseif direction == south then
+  return 0, 1
+ elseif direction == west then
+  return -1, 0
+ end
+ return 0, 0
 end
 
 function _update60()
- --update_pacman(pacman)
+ freeze -= dt
+ pickup_time -= dt
+ big_pickup_time -= dt
+ 
+ if freeze <= 0 then
+  foreach(ghosts, update)
+	 update(pacman)
+ end
 end
 
 function _draw()
  cls(0)
+ clip(8, 0, 112, 128)
+ camera(0, -2)
+ if big_pickup_time > 0 and
+    big_pickup_time % .2 > .1 then
+  pal(13, 6)
+ end
  map()
+ pal(13, 13)
  foreach(pac_dots, draw_pacdot)
  foreach(power_pellets, draw_powerpellet)
- draw_pacman(pacman)
+ draw(pacman)
+ foreach(ghosts, draw)
+ clip()
  --draw_nodes(nodes)
 end
 
 -->8
 -- path finding
+-- spoiler: there's not pathfinding
+-- in pacman. they pick the
+-- closest tile to target
 
 function new_node(x, y)
  local node = {
@@ -114,51 +216,12 @@ function new_node(x, y)
  return node
 end
 
-function can_connect(node1, node2)
- if node1 == node2 then
-  return false
- end
- if node1.x == node2.x or
-    node1.y == node2.y then
-  local x, y = node1.x, node1.y
-  while x != node2.x or
-        y != node2.y do
-   if grid[y][x].wall then
-    return false
-   end
-   if (node2.x > node1.x) x += 1
-   if (node2.x < node1.x) x -= 1
-   if (node2.y > node1.y) y += 1
-   if (node2.y < node1.y) y -= 1
-  end
-  return true
- end
- return false
-end
-
-function connect_nodes(nodes)
- for node1 in all(nodes) do
-  for node2 in all(nodes) do
-   if can_connect(node1, node2) then
-    add(node1.nbh, node2)
-    add(node2.nbh, node1)
-   end
-  end
- end
-end
-
 function draw_nodes(nodes)
  for node in all(nodes) do
   rect(
    node.x * 4, node.y * 4,
    node.x * 4 + 3, node.y * 4 + 3,
    11)
-  for node2 in all(node.nbh) do
-   line(
-    node.x * 4 + 2, node.y * 4 + 2,
-    node2.x * 4 + 2, node2.y * 4 + 2,
-    11)
-  end
  end
 end
 
@@ -168,20 +231,171 @@ end
 function new_pacman(x, y)
  local pacman = {
   x = x,
-  y = y
+  y = y,
+  direction = facing,
+  dot_cnt = 0,
+  dirp = facing,
+  dirp_time = 0,
+  power_time = 0
  }
  return pacman
 end
 
-function draw_pacman(pacman)
- spr(32, pacman.x - 4, pacman.y - 4)
+function can_move_north(x, y)
+ return
+  not wall_at(x, y - 3) and
+  flr(x + .5) % 4 == 2
 end
 
+function can_move_east(x, y)
+ return
+  not wall_at(x + 2, y) and
+  flr(y + .5) % 4 == 2
+end
+
+function can_move_south(x, y)
+ return
+  not wall_at(x, y + 2) and
+  flr(x + .5) % 4 == 2
+end
+
+function can_move_west(x, y)
+ return
+  not wall_at(x - 3, y) and
+  flr(y + .5) % 4 == 2
+end
+
+pacman_idle = {
+ update = function(o)
+  if btnp(⬆️) and 
+     can_move_north(o.x, o.y) then
+   o.direction = north
+   set_state(o, pacman_run)
+   o.x = flr(o.x / 4) * 4 + 2
+  elseif btnp(➡️) and 
+     can_move_east(o.x, o.y) then
+   o.direction = east
+   set_state(o, pacman_run)
+   o.y = flr(o.y / 4) * 4 + 2
+  elseif btnp(⬇️) and 
+     can_move_south(o.x, o.y) then
+   o.direction = south
+   set_state(o, pacman_run)
+   o.x = flr(o.x / 4) * 4 + 2
+  elseif btnp(⬅️) and 
+     can_move_west(o.x, o.y) then
+   o.direction = west
+   set_state(o, pacman_run)
+   o.y = flr(o.y / 4) * 4 + 2
+  end
+ end,
+ 
+ draw = function(o)
+  spr(32, o.x - 4, o.y - 4)
+ end
+}
+
+pacman_run = {
+ enter = function(o)
+  o.anim = 0
+ end,
+ 
+ update = function(o)
+  o.dirp_time -= dt
+  if btn(⬆️) then
+   o.dirp_time = .5
+   o.dirp = north
+  end
+  if btn(➡️) then
+   o.dirp_time = .5
+   o.dirp = east
+  end
+  if btn(⬇️) then
+   o.dirp_time = .5
+   o.dirp = south
+  end
+  if btn(⬅️) then
+   o.dirp_time = .5
+   o.dirp = west
+  end
+ 
+  if o.dirp == north and
+     o.dirp_time > 0 and 
+     can_move_north(o.x, o.y) then
+   o.direction = north
+   o.x = flr(o.x / 4) * 4 + 2
+   o.dirp_time = 0
+  elseif o.dirp == east and
+     o.dirp_time > 0 and 
+     can_move_east(o.x, o.y) then
+   o.direction = east
+   o.y = flr(o.y / 4) * 4 + 2
+   o.dirp_time = 0
+  elseif o.dirp == south and
+     o.dirp_time > 0 and 
+     can_move_south(o.x, o.y) then
+   o.direction = south
+   o.x = flr(o.x / 4) * 4 + 2
+   o.dirp_time = 0
+  elseif o.dirp == west and
+     o.dirp_time > 0 and 
+     can_move_west(o.x, o.y) then
+   o.direction = west
+   o.y = flr(o.y / 4) * 4 + 2
+   o.dirp_time = 0
+  end
+
+  local vx, vy = dir_to_vec(o.direction)
+  
+  if wall_at(o.x + vx * 2, o.y + vy * 2) then
+   o.x = flr(o.x / 4) * 4 + 2
+   o.y = flr(o.y / 4) * 4 + 2
+   set_state(o, pacman_idle)
+   return
+  end
+  
+  o.x += vx * .5
+  o.y += vy * .5
+  o.anim += .25
+  
+  -- pickup items
+  for dot in all(pac_dots) do
+   if dot.x >= o.x - 1 and
+      dot.x <= o.x + 1 and
+      dot.y >= o.y - 1 and
+      dot.y <= o.y + 1 then
+    pickup_pacdot(dot, o)
+   end
+  end
+  for pp in all(power_pellets) do
+   if pp.x >= o.x - 1 and
+      pp.x <= o.x + 1 and
+      pp.y >= o.y - 1 and
+      pp.y <= o.y + 1 then
+    pickup_powerpellet(pp, o)
+   end
+  end
+ end,
+ 
+ draw = function(o)
+  local frames = _pacman_run_frames[o.direction]
+  local frame = flr(o.anim % #frames) + 1
+  spr(frames[frame], o.x - 4, o.y - 4)
+ end
+}
+
 -->8
--- pacdot
+-- pac-dot
 
 function draw_pacdot(pacdot)
  spr(0, pacdot.x - 4, pacdot.y - 4)
+end
+
+function pickup_pacdot(pacdot, o)
+ o.dot_cnt += 1
+ del(pac_dots, pacdot)
+ sfx(0)
+ pickup_time = .1
 end
 
 -->8
@@ -190,6 +404,252 @@ end
 function draw_powerpellet(powerpellet)
  spr(16, powerpellet.x - 4, powerpellet.y - 4)
 end
+
+function pickup_powerpellet(pp, o)
+ o.power_time = 10
+ del(power_pellets, pp)
+ sfx(1)
+ freeze = .5
+ pickup_time = .1
+ big_pickup_time = .5
+end
+
+-->8
+-- ghost
+blinky = 0
+pinky = 16
+inky = 32
+clyde = 48
+
+ghost_colours = {
+ [blinky] = 8,
+ [pinky] = 14,
+ [inky] = 12,
+ [clyde] = 9
+}
+
+ghost_by_typ = {}
+
+function new_ghost(x, y, typ)
+ local ghost = {
+  x = x,
+  y = y,
+  typ = typ,
+  direction = east
+ }
+ ghost_by_typ[typ] = ghost
+ return ghost
+end
+
+ghost_prison = {
+ enter = function(o)
+  o.anim = 0
+ end,
+ 
+ update = function(o)
+  o.anim += dt
+ end,
+ 
+ draw = function(o)
+  local frames = _ghost_frames[o.direction]
+  local frame = frames[flr(o.anim * 8) % #frames + 1]
+  frame += o.typ
+  spr(frame, o.x - 4, o.y - 4)
+ end
+}
+
+function get_target(o)
+ if o.typ == blinky then
+  return map_pos(pacman.x, pacman.y)
+ elseif o.typ == pinky then
+  local vx, vy = dir_to_vec(pacman.direction)
+  if pacman.direction == north then
+   vx = -1
+  end
+  local mx, my = map_pos(pacman.x, pacman.y)
+  return mx + vx * 4, my + vy * 4
+ elseif o.typ == inky then
+  local vx, vy = dir_to_vec(pacman.direction)
+  local mx, my = map_pos(pacman.x, pacman.y)
+  if pacman.direction == north then
+   vx = -1
+  end
+  local ax, ay = mx + vx * 2, my + vy * 2
+  local blinky = ghost_by_typ[blinky]
+  mx, my = map_pos(blinky.x, blinky.y)
+  return
+     mx + (ax - mx) * 2,
+     my + (ay - my) * 2
+ elseif o.typ == clyde then
+  local px, py = map_pos(pacman.x, pacman.y)
+  local mx, my = map_pos(o.x, o.y)
+  local d = dis(mx, my, px, py)
+  if d <= 8 then
+   return 0, 32
+  else
+   return px, py
+  end
+ end
+ 
+ return 0, 0
+end
+
+function get_possible_dirs(o, except)
+ local dirs = {}
+ if not wall_at(o.x, o.y - 4) and
+    except != north then
+  add(dirs, north)
+ end
+ if not wall_at(o.x + 4, o.y) and
+    except != east then
+  add(dirs, east)
+ end
+ if not wall_at(o.x, o.y + 4) and
+    except != south then
+  add(dirs, south)
+ end
+ if not wall_at(o.x - 4, o.y) and
+    except != west then
+  add(dirs, west)
+ end
+ return dirs
+end
+
+-- with all possible directions,
+-- pick the closest one to target tx,ty
+function chose_dir(o, dirs, tx, ty)
+ local mx, my = map_pos(o.x, o.y)
+ local vx, vy = dir_to_vec(dirs[1])
+ local best = dis(tx, ty, mx + vx, my + vy)
+ local best_dir = dirs[1]
+ for i = 2, #dirs do
+  vx, vy = dir_to_vec(dirs[i])
+  local d = dis(tx, ty, mx + vx, my + vy)
+  if d < best then
+   best = d
+   best_dir = dirs[i]
+  end
+ end
+ return best_dir
+end
+
+ghost_seek = {
+ enter = function(o)
+  o.anim = 0
+  local tx, ty = get_target(o)
+  o.direction = chose_dir(
+   o, 
+   get_possible_dirs(o, facing),
+   tx, ty)
+ end,
+ 
+ update = function(o)
+  local vx, vy = dir_to_vec(o.direction)
+  local prev_node = node_at_exact(o.x, o.y)
+  o.x += vx * .25
+  o.y += vy * .25
+  local node = node_at_exact(o.x, o.y)
+  if node and node != prev_node then
+   if node.teleport then
+    node = node.teleport
+    o.x = node.x * 4 + 2
+    o.y = node.y * 4 + 2
+   end
+   o.x = flr(o.x / 4) * 4 + 2
+   o.y = flr(o.y / 4) * 4 + 2
+   local tx, ty = get_target(o)
+   o.direction = chose_dir(o, 
+    get_possible_dirs(o, inv[o.direction]),
+    tx, ty)
+  end
+  o.anim += .10
+ end,
+ 
+ draw = function(o)
+  local frames = _ghost_frames[o.direction]
+  local frame = frames[flr(o.anim) % #frames + 1]
+  frame += o.typ
+  spr(frame, o.x - 4, o.y - 4)
+  
+  -- debug ghost target
+  --local x, y = get_target(o)
+  --x *= 4
+  --y *= 4
+  --rect(x - 1, y - 1, x + 4, y + 4, ghost_colours[o.typ])
+ end
+}
+
+ghost_flee = {
+}
+
+ghost_corner = {
+}
+
+ghost_go_prison = {
+}
+
+ghost_starting_state = {
+ [blinky] = ghost_seek,
+ [pinky] = ghost_seek,
+ [inky] = ghost_seek,
+ [clyde] = ghost_seek
+}
+
+-->8
+
+-->8
+-- states and anims
+
+function update(obj)
+ if obj.state then
+  if obj.state.update then
+   obj.state.update(obj)
+  end
+ end
+end
+
+function draw(obj)
+ if obj.state then
+  if obj.state.draw then
+   obj.state.draw(obj)
+  end
+ end
+end
+
+function set_state(obj, state)
+ if obj.state == state then
+  return
+ end
+ 
+ if obj.state then
+  if obj.state.leave then
+   obj.state.leave(obj, state)
+  end
+ end
+ 
+ obj.state = state
+ 
+ if obj.state then
+  if obj.state.enter then
+   obj.state.enter(obj, state)
+  end
+ end
+end
+
+-- anims
+_pacman_run_frames = {
+ [north] = {32, 35, 36, 35},
+ [east] = {32, 33, 34, 33},
+ [south] = {32, 48, 49, 48},
+ [west] = {32, 50, 51, 50}
+}
+
+_ghost_frames = {
+ [north] = {12, 13},
+ [east] = {8, 9},
+ [south] = {14, 15},
+ [west] = {10, 11}
+}
 
 __gfx__
 00000000000000000000900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
@@ -267,10 +727,10 @@ d1d1111111111d1d000000000000000000000d1111d0000000000000000000000001111111111000
 00d999999dd9999dd9999dd999999d0000db0000bddb00bddb00bddb0000bd000000000000000000000000000000000000000000000000000000000000000000
 00dddddd9ddddd0dd0ddddd9dddddd0000dddddd0ddddd0dd0ddddd0dddddd000000000000000000000000000000000000000000000000000000000000000000
 0000000d9ddddd0dd0ddddd9d00000000000000d0ddddd0dd0ddddd0d00000000000000000000000000000000000000000000000000000000000000000000000
-0000000d9dd0000800000dd9d00000000000000d0ddb00b30b00bdd0d00000000000000000000000000000000000000000000000000000000000000000000000
-0000000d9dd0ddd00ddd0dd9d00000000000000d0dd0ddd00ddd0dd0d00000000000000000000000000000000000000000000000000000000000000000000000
+0000000d9dd00b080e00fdd9d00000000000000d0ddb00a00a00bdd0d00000000000000000000000000000000000000000000000000000000000000000000000
+0000000d9dd0dddddddd0dd9d00000000000000d0dd0ddd00ddd0dd0d00000000000000000000000000000000000000000000000000000000000000000000000
 dddddddd9dd0d000000d0dd9dddddddddddddddd0dd0d000000d0dd0dddddddd0000000000000000000000000000000000000000000000000000000000000000
-d00000009000d30e0f0d00090000000ddb000000b00bd0b30b0db00b000000bd0000000000000000000000000000000000000000000000000000000000000000
+000000009000d000000d000900000000b0000000b00bd000000db00b0000000b0000000000000000000000000000000000000000000000000000000000000000
 dddddddd9dd0d000000d0dd9dddddddddddddddd0dd0d000000d0dd0dddddddd0000000000000000000000000000000000000000000000000000000000000000
 0000000d9dd0dddddddd0dd9d00000000000000d0dd0dddddddd0dd0d00000000000000000000000000000000000000000000000000000000000000000000000
 0000000d9dd0000000000dd9d00000000000000d0ddb00000000bdd0d00000000000000000000000000000000000000000000000000000000000000000000000
@@ -279,7 +739,7 @@ dddddddd9dd0d000000d0dd9dddddddddddddddd0dd0d000000d0dd0dddddddd0000000000000000
 00d999999999999dd999999999999d0000db0000b00b00bddb00b00b0000bd000000000000000000000000000000000000000000000000000000000000000000
 00d9dddd9ddddd9dd9ddddd9dddd9d0000d0dddd0ddddd0dd0ddddd0dddd0d000000000000000000000000000000000000000000000000000000000000000000
 00d9dddd9ddddd9dd9ddddd9dddd9d0000d0dddd0ddddd0dd0ddddd0dddd0d000000000000000000000000000000000000000000000000000000000000000000
-00dc99dd9999999a09999999dd99cd0000db0bddb00b00b00b00b00bddb0bd000000000000000000000000000000000000000000000000000000000000000000
+00dc99dd9999999a09999999dd99cd0000db0bddb00b00a00a00b00bddb0bd000000000000000000000000000000000000000000000000000000000000000000
 00ddd9dd9dd9dddddddd9dd9dd9ddd0000ddd0dd0dd0dddddddd0dd0dd0ddd000000000000000000000000000000000000000000000000000000000000000000
 00ddd9dd9dd9dddddddd9dd9dd9ddd0000ddd0dd0dd0dddddddd0dd0dd0ddd000000000000000000000000000000000000000000000000000000000000000000
 00d999999dd9999dd9999dd999999d0000db0b00bddb00bddb00bddb00b0bd000000000000000000000000000000000000000000000000000000000000000000
@@ -444,4 +904,5 @@ __map__
 0050555656565753545556565657520000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0076515151515151515151515151770000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 __sfx__
-0102001a19250192501a2501b2501e250222502b20008200102001f2000d2500e2500f2501225014250172501c25007200082000a2000c2000020000200002000020000200002000020000200002000020000200
+0002000019750197501a7401b7301e720227102b70008700107001f700217502274023740267302b7202f7102d70007700087000a7000c7000070000700007000070000700007000070000700007000070000700
+000300001d1502115024150191501c1501f15024150281502c1501b1501d1501f1502315025150281502b1502f150301501f1502215025150291502c150301503315036150291002d10035100391003c1003f100
