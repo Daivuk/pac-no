@@ -27,6 +27,8 @@ function _init()
  pickup_time = 0
  big_pickup_time = 0
  freeze = 0
+ door = 1 -- 1 = closed, 0 = open
+ door_open = false
  
  -- build the map
  grid = {}
@@ -178,7 +180,13 @@ function _update60()
  big_pickup_time -= dt
  
  if freeze <= 0 then
+  door_open = false
   foreach(ghosts, update)
+  if door_open then
+   door = max(0, door - dt * 4)
+  elseif not door_open then
+   door = min(1, door + dt * 4)
+  end
 	 update(pacman)
  end
 end
@@ -195,9 +203,27 @@ function _draw()
  pal(13, 13)
  foreach(pac_dots, draw_pacdot)
  foreach(power_pellets, draw_powerpellet)
- draw(pacman)
+ 
+ -- prison door
+ local door = door % 2
+ if door > 1 then
+  door = 2 - door
+ end
+ door = flr(door * 4) / 4
+ rectfill(60, 50, 60 + 4 * door, 
+  50, 14)
+ rectfill(64 + 3 * (1 - door), 50, 67, 
+  50, 14)
+ rectfill(60, 51, 60 + 4 * door, 
+  51, 2)
+ rectfill(64 + 3 * (1 - door),
+  51, 67, 
+  51, 2)
+ 
  foreach(ghosts, draw)
+ draw(pacman)
  clip()
+ 
  --draw_nodes(nodes)
 end
 
@@ -360,18 +386,12 @@ pacman_run = {
   
   -- pickup items
   for dot in all(pac_dots) do
-   if dot.x >= o.x - 1 and
-      dot.x <= o.x + 1 and
-      dot.y >= o.y - 1 and
-      dot.y <= o.y + 1 then
+   if touchy(dot, o) then
     pickup_pacdot(dot, o)
    end
   end
   for pp in all(power_pellets) do
-   if pp.x >= o.x - 1 and
-      pp.x <= o.x + 1 and
-      pp.y >= o.y - 1 and
-      pp.y <= o.y + 1 then
+   if touchy(pp, o) then
     pickup_powerpellet(pp, o)
    end
   end
@@ -381,6 +401,28 @@ pacman_run = {
   local frames = _pacman_run_frames[o.direction]
   local frame = flr(o.anim % #frames) + 1
   spr(frames[frame], o.x - 4, o.y - 4)
+ end
+}
+
+pacman_die = {
+ enter = function(o)
+  freeze = 6
+  o.anim = 0
+  sfx(2)
+ end,
+ 
+ draw = function(o)
+  local frames = _pacman_die_frames
+  local frame = min(flr(o.anim), #frames - 1) + 1
+  frame = frames[frame]
+  if frame then
+   spr(frame, o.x - 4, o.y - 4)
+  end
+  o.anim += .2
+  
+  if o.anim >= #frames + 8 then
+   _init()
+  end
  end
 }
 
@@ -412,6 +454,8 @@ function pickup_powerpellet(pp, o)
  freeze = .5
  pickup_time = .1
  big_pickup_time = .5
+ 
+ foreach(ghosts, frighten)
 end
 
 -->8
@@ -428,6 +472,13 @@ ghost_colours = {
  [clyde] = 9
 }
 
+ghost_prison_time = {
+ [blinky] = 0,
+ [pinky] = 7,
+ [inky] = 17,
+ [clyde] = 32
+}
+
 ghost_by_typ = {}
 
 function new_ghost(x, y, typ)
@@ -441,21 +492,97 @@ function new_ghost(x, y, typ)
  return ghost
 end
 
+function draw_frightened_ghost(o)
+ local frames = _ghost_frightened_frames
+ local frame = frames[flr(o.anim) % #frames + 1]
+ spr(frame, o.x - 4, o.y - 4)
+end
+
+function draw_eyes(o)
+ local frame = _eyes_frames[o.direction]
+ spr(frame, o.x - 4, o.y - 4)
+end
+
+function draw_ghost(o)
+ local frames = _ghost_frames[o.direction]
+ local frame = frames[flr(o.anim) % #frames + 1]
+ frame += o.typ
+ spr(frame, o.x - 4, o.y - 4)
+  
+  -- debug ghost target
+  --local x, y = get_target(o)
+  --x *= 4
+  --y *= 4
+  --rect(x - 1, y - 1, x + 4, y + 4, ghost_colours[o.typ])
+end
+
+function get_possible_dirs(o, except)
+ local dirs = {}
+ local x, y = flr(o.x + .5), flr(o.y + .5)
+ if not wall_at(x - 2, y - 4) and
+    not wall_at(x + 1, y - 4) and
+    not has(except, north) then
+  add(dirs, north)
+ end
+ if not wall_at(x + 4, y - 2) and
+    not wall_at(x + 4, y + 1) and
+    not has(except, east) then
+  add(dirs, east)
+ end
+ if not wall_at(x - 2, y + 4) and
+    not wall_at(x + 1, y + 4) and
+    not has(except, south) then
+  add(dirs, south)
+ end
+ if not wall_at(x - 4, y - 2) and
+    not wall_at(x - 4, y + 1) and
+    not has(except, west) then
+  add(dirs, west)
+ end
+ return dirs
+end
+
 ghost_prison = {
  enter = function(o)
   o.anim = 0
+  o.dots_start = #pac_dots
+  o.direction = flr(rnd(4)) + 1
  end,
  
  update = function(o)
+  if o.direction == north and
+     wall_at(o.x, o.y - 4) then
+   local dirs = get_possible_dirs(o, {north})
+   o.direction = dirs[flr(rnd(#dirs)) + 1]
+  elseif o.direction == east and
+     wall_at(o.x + 3, o.y) then
+   local dirs = get_possible_dirs(o, {east})
+   o.direction = dirs[flr(rnd(#dirs)) + 1]
+  elseif o.direction == south and
+     wall_at(o.x, o.y + 3) then
+   local dirs = get_possible_dirs(o, {south})
+   o.direction = dirs[flr(rnd(#dirs)) + 1]
+  elseif o.direction == west and
+     wall_at(o.x - 4, o.y) then
+   local dirs = get_possible_dirs(o, {westrth})
+   o.direction = dirs[flr(rnd(#dirs)) + 1]
+  end
+ 
+  local vx, vy = dir_to_vec(o.direction)
+  o.x += vx * .25
+  o.y += vy * .25
+
   o.anim += dt
+  
+  -- check if we can exit the prison
+  local dot_cnt = o.dots_start - #pac_dots
+  if dot_cnt >= ghost_prison_time[o.typ] then
+   set_state(o, ghost_leave_prison)
+   return
+  end
  end,
  
- draw = function(o)
-  local frames = _ghost_frames[o.direction]
-  local frame = frames[flr(o.anim * 8) % #frames + 1]
-  frame += o.typ
-  spr(frame, o.x - 4, o.y - 4)
- end
+ draw = draw_ghost
 }
 
 function get_target(o)
@@ -494,27 +621,6 @@ function get_target(o)
  return 0, 0
 end
 
-function get_possible_dirs(o, except)
- local dirs = {}
- if not wall_at(o.x, o.y - 4) and
-    except != north then
-  add(dirs, north)
- end
- if not wall_at(o.x + 4, o.y) and
-    except != east then
-  add(dirs, east)
- end
- if not wall_at(o.x, o.y + 4) and
-    except != south then
-  add(dirs, south)
- end
- if not wall_at(o.x - 4, o.y) and
-    except != west then
-  add(dirs, west)
- end
- return dirs
-end
-
 -- with all possible directions,
 -- pick the closest one to target tx,ty
 function chose_dir(o, dirs, tx, ty)
@@ -539,7 +645,7 @@ ghost_seek = {
   local tx, ty = get_target(o)
   o.direction = chose_dir(
    o, 
-   get_possible_dirs(o, facing),
+   get_possible_dirs(o, {}),
    tx, ty)
  end,
  
@@ -558,44 +664,205 @@ ghost_seek = {
    o.x = flr(o.x / 4) * 4 + 2
    o.y = flr(o.y / 4) * 4 + 2
    local tx, ty = get_target(o)
+   local dir_exclude = {
+    inv[o.direction]
+   }
+   if node.prevent_north then
+    add(dir_exclude, north)
+   end
    o.direction = chose_dir(o, 
-    get_possible_dirs(o, inv[o.direction]),
+    get_possible_dirs(o, dir_exclude),
     tx, ty)
   end
   o.anim += .10
+  
+  if touch(o, pacman) then
+   set_state(pacman, pacman_die)
+  end
  end,
  
- draw = function(o)
-  local frames = _ghost_frames[o.direction]
-  local frame = frames[flr(o.anim) % #frames + 1]
-  frame += o.typ
-  spr(frame, o.x - 4, o.y - 4)
-  
-  -- debug ghost target
-  --local x, y = get_target(o)
-  --x *= 4
-  --y *= 4
-  --rect(x - 1, y - 1, x + 4, y + 4, ghost_colours[o.typ])
- end
+ draw = draw_ghost
 }
 
 ghost_flee = {
+ enter = function(o)
+  o.free_time = 6
+  o.direction = inv[o.direction]
+  o.anim = 0
+ end,
+ 
+ update = function(o)
+  local vx, vy = dir_to_vec(o.direction)
+  local prev_node = node_at_exact(o.x, o.y)
+  o.x += vx * .20
+  o.y += vy * .20
+  local node = node_at_exact(o.x, o.y)
+  if node and node != prev_node then
+   if node.teleport then
+    node = node.teleport
+    o.x = node.x * 4 + 2
+    o.y = node.y * 4 + 2
+   else
+    o.x = flr(o.x / 4) * 4 + 2
+    o.y = flr(o.y / 4) * 4 + 2
+    local dirs = get_possible_dirs(o, {})
+    o.direction = dirs[flr(rnd(#dirs)) + 1]
+   end
+  end 
+ 
+  o.anim += .10
+  o.free_time -= dt
+  if o.free_time < 0 then
+   set_state(o, ghost_seek)
+  end
+  
+  if touch(o, pacman) then
+   set_state(o, ghost_go_prison)
+   return
+  end
+ end,
+ 
+ draw = draw_frightened_ghost
 }
 
 ghost_corner = {
 }
 
+function get_prison(o)
+ if o.y > 64 then
+  return 15, 0
+ elseif o.y < 40 then
+  return 32, 32
+ end
+ return 16, 11
+end
+
+ghost_enter_prison = {
+ update = function(o)
+  door_open = true
+  o.y += .5
+  if o.y >= 54 then
+   set_state(o, ghost_prison)
+  end
+ end,
+ 
+ draw = draw_eyes
+}
+
 ghost_go_prison = {
+ enter = function(o)
+  freeze = .2
+  sfx(3)
+  local tx, ty = get_prison(o)
+  o.direction = chose_dir(
+   o, 
+   get_possible_dirs(o, {}),
+   tx, ty)
+ end,
+ 
+ update = function(o)
+  local vx, vy = dir_to_vec(o.direction)
+  local prev_node = node_at_exact(o.x, o.y)
+  o.x += vx * .5
+  o.y += vy * .5
+  local node = node_at_exact(o.x, o.y)
+  if node and node != prev_node then
+   if node.teleport then
+    node = node.teleport
+    o.x = node.x * 4 + 2
+    o.y = node.y * 4 + 2
+   end
+   o.x = flr(o.x / 4) * 4 + 2
+   o.y = flr(o.y / 4) * 4 + 2
+   local tx, ty = get_prison(o)
+   o.direction = chose_dir(o, 
+    get_possible_dirs(o, {}),
+    tx, ty)
+  end
+  o.anim += .10
+  if flr(o.x) == 64 and
+     flr(o.y) == 46 then
+   set_state(o, ghost_enter_prison)
+  end
+ end,
+ 
+ draw = draw_eyes
+}
+
+ghost_leave_prison = {
+ update = function(o)
+  -- align horizontally
+  if o.x < 64 then
+   o.direction = east
+   o.x += .25
+   if o.x >= 64 then
+    o.x = 64
+   end
+  elseif o.x > 64 then
+   o.direction = west
+   o.x -= .25
+   if o.x <= 64 then
+    o.x = 64
+   end
+  else
+   door_open = true
+   o.y -= .25
+   if o.y <= 46 then
+    o.y = 46
+    set_state(o, ghost_seek)
+    return
+   end
+  end
+
+  o.anim += dt
+ end,
+ 
+ draw = draw_ghost
 }
 
 ghost_starting_state = {
  [blinky] = ghost_seek,
- [pinky] = ghost_seek,
- [inky] = ghost_seek,
- [clyde] = ghost_seek
+ [pinky] = ghost_prison,
+ [inky] = ghost_prison,
+ [clyde] = ghost_prison
 }
 
+function frighten(o)
+ if o.state == ghost_seek or
+    o.state == ghost_corner then
+  set_state(o, ghost_flee)
+ elseif o.state == ghost_flee then 
+  o.free_time = 6
+ end
+end
 -->8
+-- helpers
+function has(t, i)
+ for j in all(t) do
+  if j == i then
+   return true
+  end
+ end
+ return false
+end
+
+-- small touch detection
+function touchy(a, b)
+	return 
+	 a.x >= b.x - 1 and
+  a.x <= b.x + 1 and
+  a.y >= b.y - 1 and
+  a.y <= b.y + 1
+end
+
+-- larger touch
+function touch(a, b)
+	return 
+	 a.x >= b.x - 5 and
+  a.x <= b.x + 5 and
+  a.y >= b.y - 5 and
+  a.y <= b.y + 5
+end
 
 -->8
 -- states and anims
@@ -644,13 +911,24 @@ _pacman_run_frames = {
  [west] = {32, 50, 51, 50}
 }
 
+_pacman_die_frames = {
+ 32, 35, 36, 52, 5, 21, 37, 
+ 53, nil, 53, nil, 53, nil
+}
+
 _ghost_frames = {
  [north] = {12, 13},
  [east] = {8, 9},
  [south] = {14, 15},
  [west] = {10, 11}
 }
-
+_ghost_frightened_frames = {6, 7}
+_eyes_frames = {
+ [north] = 54,
+ [east] = 38,
+ [south] = 55,
+ [west] = 39
+}
 __gfx__
 00000000000000000000900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000000090003bb30000004b30000900000000000000111100001111000028880000288800002888000028880000288800002888000028880000288800
@@ -727,10 +1005,10 @@ d1d1111111111d1d000000000000000000000d1111d0000000000000000000000001111111111000
 00d999999dd9999dd9999dd999999d0000db0000bddb00bddb00bddb0000bd000000000000000000000000000000000000000000000000000000000000000000
 00dddddd9ddddd0dd0ddddd9dddddd0000dddddd0ddddd0dd0ddddd0dddddd000000000000000000000000000000000000000000000000000000000000000000
 0000000d9ddddd0dd0ddddd9d00000000000000d0ddddd0dd0ddddd0d00000000000000000000000000000000000000000000000000000000000000000000000
-0000000d9dd00b080e00fdd9d00000000000000d0ddb00a00a00bdd0d00000000000000000000000000000000000000000000000000000000000000000000000
+0000000d9dd0000800000dd9d00000000000000d0ddb00a00a00bdd0d00000000000000000000000000000000000000000000000000000000000000000000000
 0000000d9dd0dddddddd0dd9d00000000000000d0dd0ddd00ddd0dd0d00000000000000000000000000000000000000000000000000000000000000000000000
 dddddddd9dd0d000000d0dd9dddddddddddddddd0dd0d000000d0dd0dddddddd0000000000000000000000000000000000000000000000000000000000000000
-000000009000d000000d000900000000b0000000b00bd000000db00b0000000b0000000000000000000000000000000000000000000000000000000000000000
+000000009000db0e0f0d000900000000b0000000b00bd000000db00b0000000b0000000000000000000000000000000000000000000000000000000000000000
 dddddddd9dd0d000000d0dd9dddddddddddddddd0dd0d000000d0dd0dddddddd0000000000000000000000000000000000000000000000000000000000000000
 0000000d9dd0dddddddd0dd9d00000000000000d0dd0dddddddd0dd0d00000000000000000000000000000000000000000000000000000000000000000000000
 0000000d9dd0000000000dd9d00000000000000d0ddb00000000bdd0d00000000000000000000000000000000000000000000000000000000000000000000000
@@ -904,5 +1182,7 @@ __map__
 0050555656565753545556565657520000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0076515151515151515151515151770000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 __sfx__
-0002000019750197501a7401b7301e720227102b70008700107001f700217502274023740267302b7202f7102d70007700087000a7000c7000070000700007000070000700007000070000700007000070000700
+0002000017750197501a7401b7301e720227102b70008700107001f700217502274023740267302b7202f7102d70007700087000a7000c7000070000700007000070000700007000070000700007000070000700
 000300001d1502115024150191501c1501f15024150281502c1501b1501d1501f1502315025150281502b1502f150301501f1502215025150291502c150301503315036150291002d10035100391003c1003f100
+0005000035350383503c3503e3502c3502f35032350333501e3502235026350273501a3501d3501f350203500f3501135014350173500e3500c35009350073500135001300013000030000300003000030000300
+000200001d570215701e570195002b5001f5001a57019570145701b5002f5001550015570155701457012570115700f5701f5003550025500295000e5700f5701357016570295002d5003d500395003c5003f500
