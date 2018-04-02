@@ -29,6 +29,7 @@ function _init()
  freeze = 0
  door = 1 -- 1 = closed, 0 = open
  door_open = false
+ shinay = 0 -- jemaine clement
  
  -- build the map
  grid = {}
@@ -200,6 +201,18 @@ function _draw()
   pal(13, 6)
  end
  map()
+ 
+ if shinay < 32 then
+  pal(13, 7)
+  for i = 0, 31 do
+   map(shinay - i, i,
+    (shinay - i) * 8, 
+    i * 8,
+    1, 1)
+  end
+ end
+ shinay = (shinay + 1) % 900
+ 
  pal(13, 13)
  foreach(pac_dots, draw_pacdot)
  foreach(power_pellets, draw_powerpellet)
@@ -454,6 +467,7 @@ function pickup_powerpellet(pp, o)
  freeze = .5
  pickup_time = .1
  big_pickup_time = .5
+ shinay = 0
  
  foreach(ghosts, frighten)
 end
@@ -495,6 +509,11 @@ end
 function draw_frightened_ghost(o)
  local frames = _ghost_frightened_frames
  local frame = frames[flr(o.anim) % #frames + 1]
+ if o.free_time < 1.8 then
+  if o.free_time % .6 > .3 then
+   frame += 16
+  end
+ end
  spr(frame, o.x - 4, o.y - 4)
 end
 
@@ -714,6 +733,10 @@ ghost_flee = {
   o.free_time -= dt
   if o.free_time < 0 then
    set_state(o, ghost_seek)
+   if shinay > 32 then
+    shinay = 0
+   end
+   return
   end
   
   if touch(o, pacman) then
