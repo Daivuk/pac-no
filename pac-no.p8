@@ -18,6 +18,8 @@ inv = {
 
 function _init()
  dt = 1 / 60
+ level = 1
+
  grid = {}
  nodes = {}
  pac_dots = {}
@@ -162,19 +164,6 @@ function dis(x1, y1, x2, y2)
  return sqrt(q*q + w*w)
 end
 
-function dir_to_vec(direction)
- if direction == north then
-  return 0, -1
- elseif direction == east then
-  return 1, 0
- elseif direction == south then
-  return 0, 1
- elseif direction == west then
-  return -1, 0
- end
- return 0, 0
-end
-
 function _update60()
  freeze -= dt
  pickup_time -= dt
@@ -188,7 +177,11 @@ function _update60()
   elseif not door_open then
    door = min(1, door + dt * 4)
   end
-	 update(pacman)
+  if pacman.freeze_frames > 0 then
+   pacman.freeze_frames -= 1
+  else
+	  update(pacman)
+	 end
  end
 end
 
@@ -238,14 +231,27 @@ function _draw()
  draw(pacman)
  clip()
  
+ -- hud
+ for i = 1, pacman.life do
+  spr(50, 0, 0 + (i - 1) * 8)
+ end
+ 
+ local spd = dat(dat_ghost_spd)
+ print(ref_spd, 0, 0, 7)
+ print(spd, 0, 10)
+ print(spd * ref_spd * dt, 0, 20)
+ 
+ local spd = dat(dat_pacman_spd)
+ print(ref_spd, 0, 30, 7)
+ print(spd, 0, 40)
+ print(spd * ref_spd * dt, 0, 50)
+ print("")
+ 
  --draw_nodes(nodes)
 end
 
 -->8
--- path finding
--- spoiler: there's not pathfinding
--- in pacman. they pick the
--- closest tile to target
+-- node
 
 function new_node(x, y)
  local node = {
@@ -276,7 +282,9 @@ function new_pacman(x, y)
   dot_cnt = 0,
   dirp = facing,
   dirp_time = 0,
-  power_time = 0
+  power_time = 0,
+  life = 3,
+  freeze_frames = 0
  }
  return pacman
 end
@@ -394,9 +402,10 @@ pacman_run = {
    return
   end
   
-  o.x += vx * .5
-  o.y += vy * .5
-  o.anim += .25
+  local spd = dat(dat_pacman_spd)
+  o.x += vx * ref_spd * spd * dt
+  o.y += vy * ref_spd * spd * dt
+  o.anim += spd * 15 * dt
   
   -- pickup items
   for dot in all(pac_dots) do
@@ -452,6 +461,7 @@ function pickup_pacdot(pacdot, o)
  del(pac_dots, pacdot)
  sfx(0)
  pickup_time = .1
+ o.freeze_frames = 1
 end
 
 -->8
@@ -469,6 +479,7 @@ function pickup_powerpellet(pp, o)
  pickup_time = .1
  big_pickup_time = .5
  shinay = 0
+ o.freeze_frames = 3
  
  foreach(ghosts, frighten)
 end
@@ -589,10 +600,11 @@ ghost_prison = {
   end
  
   local vx, vy = dir_to_vec(o.direction)
-  o.x += vx * .25
-  o.y += vy * .25
+  local spd = dat(dat_ghost_spd)
+  o.x += vx * ref_spd * spd * dt
+  o.y += vy * ref_spd * spd * dt
 
-  o.anim += dt
+  o.anim += spd * 15 * dt
   
   -- check if we can exit the prison
   local dot_cnt = o.dots_start - #pac_dots
@@ -672,8 +684,9 @@ ghost_seek = {
  update = function(o)
   local vx, vy = dir_to_vec(o.direction)
   local prev_node = node_at_exact(o.x, o.y)
-  o.x += vx * .25
-  o.y += vy * .25
+  local spd = dat(dat_ghost_spd)
+  o.x += vx * spd * dt * ref_spd
+  o.y += vy * spd * dt * ref_spd
   local node = node_at_exact(o.x, o.y)
   if node and node != prev_node then
    if node.teleport then
@@ -694,7 +707,7 @@ ghost_seek = {
     get_possible_dirs(o, dir_exclude),
     tx, ty)
   end
-  o.anim += .10
+  o.anim += dt * spd * 15
   
   if touch(o, pacman) then
    set_state(pacman, pacman_die)
@@ -714,8 +727,9 @@ ghost_flee = {
  update = function(o)
   local vx, vy = dir_to_vec(o.direction)
   local prev_node = node_at_exact(o.x, o.y)
-  o.x += vx * .20
-  o.y += vy * .20
+  local spd = dat(dat_fright_ghost_spd)
+  o.x += vx * spd * dt * ref_spd
+  o.y += vy * spd * dt * ref_spd
   local node = node_at_exact(o.x, o.y)
   if node and node != prev_node then
    if node.teleport then
@@ -730,7 +744,7 @@ ghost_flee = {
    end
   end 
  
-  o.anim += .10
+  o.anim += spd * 15 * dt
   o.free_time -= dt
   if o.free_time < 0 then
    set_state(o, ghost_seek)
@@ -765,10 +779,12 @@ end
 ghost_enter_prison = {
  update = function(o)
   door_open = true
-  o.y += .5
+  local spd = dat(dat_ghost_spd)
+  o.y += ref_spd * spd * dt
   if o.y >= 54 then
    set_state(o, ghost_prison)
   end
+  o.anim += 15 * spd * dt
  end,
  
  draw = draw_eyes
@@ -788,8 +804,9 @@ ghost_go_prison = {
  update = function(o)
   local vx, vy = dir_to_vec(o.direction)
   local prev_node = node_at_exact(o.x, o.y)
-  o.x += vx * .5
-  o.y += vy * .5
+  local spd = dat(dat_ghost_spd)
+  o.x += vx * spd * dt * ref_spd
+  o.y += vy * spd * dt * ref_spd
   local node = node_at_exact(o.x, o.y)
   if node and node != prev_node then
    if node.teleport then
@@ -804,7 +821,7 @@ ghost_go_prison = {
     get_possible_dirs(o, {}),
     tx, ty)
   end
-  o.anim += .10
+  o.anim += spd * 15 * dt
   if flr(o.x) == 64 and
      flr(o.y) == 46 then
    set_state(o, ghost_enter_prison)
@@ -816,22 +833,23 @@ ghost_go_prison = {
 
 ghost_leave_prison = {
  update = function(o)
+  local spd = dat(dat_ghost_spd)
   -- align horizontally
   if o.x < 64 then
    o.direction = east
-   o.x += .25
+   o.x += spd * ref_spd * dt
    if o.x >= 64 then
     o.x = 64
    end
   elseif o.x > 64 then
    o.direction = west
-   o.x -= .25
+   o.x -= spd * ref_spd * dt
    if o.x <= 64 then
     o.x = 64
    end
   else
    door_open = true
-   o.y -= .25
+   o.y -= spd * ref_spd * dt
    if o.y <= 46 then
     o.y = 46
     set_state(o, ghost_seek)
@@ -839,7 +857,7 @@ ghost_leave_prison = {
    end
   end
 
-  o.anim += dt
+  o.anim += dt * 15 * spd
  end,
  
  draw = draw_ghost
@@ -883,10 +901,23 @@ end
 -- larger touch
 function touch(a, b)
 	return 
-	 a.x >= b.x - 5 and
-  a.x <= b.x + 5 and
-  a.y >= b.y - 5 and
-  a.y <= b.y + 5
+	 a.x >= b.x - 3 and
+  a.x <= b.x + 3 and
+  a.y >= b.y - 3 and
+  a.y <= b.y + 3
+end
+
+function dir_to_vec(direction)
+ if direction == north then
+  return 0, -1
+ elseif direction == east then
+  return 1, 0
+ elseif direction == south then
+  return 0, 1
+ elseif direction == west then
+  return -1, 0
+ end
+ return 0, 0
 end
 
 -->8
@@ -954,6 +985,138 @@ _eyes_frames = {
  [south] = 55,
  [west] = 39
 }
+
+-- pac data
+ref_spd = 44
+
+spr_cherries = 1
+spr_strawberry = 2
+spr_peach = 3
+spr_apple = 4
+spr_grapes = 17
+spr_galaxian = 18
+spr_bell = 19
+spr_key = 20
+
+dat_bonus_symbol = {
+ spr_cherries,
+ spr_strawberry,
+ spr_peach,
+ spr_peach,
+ spr_apple,
+ spr_apple,
+ spr_grapes,
+ spr_grapes,
+ spr_galaxian,
+ spr_galaxian,
+ spr_bell,
+ spr_bell,
+ spr_key
+}
+
+dat_bonus_pts = {
+ 100, 300, 500, 500,
+ 700, 700, 1000, 1000,
+ 2000, 2000, 3000, 3000,
+ 5000
+}
+
+dat_pacman_spd = {
+ .8, .9, .9, .9,
+ 1, 1, 1, 1,
+ 1, 1, 1, 1,
+ 1, 1, 1, 1,
+ 1, 1, 1, 1,
+ .9
+}
+
+dat_pac_dot_spd = {
+ .71, .79, .79, .79,
+ .87, .87, .87, .87,
+ .87, .87, .87, .87,
+ .87, .87, .87, .87,
+ .87, .87, .87, .87,
+ .79
+}
+
+dat_ghost_spd = {
+ .75, .85, .85, .85,
+ .95
+}
+
+dat_ghost_tunnel_spd = {
+ .4, .45, .45, .45, .5
+}
+
+dat_elrow_1_dot_left = {
+ 20, 30, 40, 40, 
+ 40, 50, 50, 50, 
+ 60, 60, 60, 80,
+ 80, 80, 100, 100,
+ 100, 100, 120
+}
+
+dat_elroy_1_dot_spd = {
+ .8, .9, .9, .9, 1
+}
+
+dat_elrow_2_dot_left = {
+ 10, 15, 20, 20,
+ 20, 25, 25, 25,
+ 30, 30, 30, 40,
+ 40, 40, 50, 50,
+ 50, 50, 60, 60,
+ 60
+}
+
+dat_elrow_2_spd = {
+ .85, .95, .95, .95, 1.05
+}
+
+dat_fright_pm_spd = {
+ .9, .95, .95, .95,
+ 1, 1, 1, 1,
+ 1, 1, 1, 1,
+ 1, 1, 1, 1,
+ nil, 1, nil
+}
+
+dat_fright_pm_dot_spd = {
+ .79, .83, .83, .83,
+ .87, .87, .87, .87,
+ .87, .87, .87, .87,
+ .87, .87, .87, .87,
+ nil, .87, nil
+}
+
+dat_fright_ghost_spd = {
+ .5, .55, .55, .55,
+ .6, .6, .6, .6,
+ .6, .6, .6, .6,
+ .6, .6, .6, .6,
+ nil, .6, nil
+}
+
+dat_fright_time = {
+ 6, 5, 4, 3,
+ 2, 5, 2, 2, 
+ 1, 5, 2, 1,
+ 1, 3, 1, 1,
+ nil, 1, nil
+}
+
+dat_num_flashes = {
+ 5, 5, 5, 5,
+ 5, 5, 5, 5,
+ 3, 5, 5, 3,
+ 3, 5, 3, 3,
+ nil, 3, nil
+}
+
+function dat(d)
+ return d[min(#d, level)]
+end
+
 __gfx__
 00000000000000000000900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000000090003bb30000004b30000900000000000000111100001111000028880000288800002888000028880000288800002888000028880000288800
